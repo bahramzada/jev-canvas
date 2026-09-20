@@ -3,44 +3,41 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JEV CANVAS — ehtimalla çəkən plotter</title>
+<title>JEV CANVAS — hər piksel bir ehtimal</title>
 <link rel="stylesheet" href="style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23f3efe4'/><circle cx='8' cy='8' r='4' fill='none' stroke='%2316150f'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><rect width='8' height='8' fill='%23f5f1e6'/><rect x='2' y='1' width='4' height='1' fill='%231b1a16'/><rect x='1' y='2' width='6' height='4' fill='%231b1a16'/><rect x='2' y='6' width='4' height='1' fill='%231b1a16'/></svg>">
 </head>
 <body>
 
 <header class="masthead">
   <div class="masthead-left">
     <h1>JEV&nbsp;CANVAS</h1>
-    <p class="strap">TypeSafe System&nbsp;One · rəsmi ehtimal çəkir</p>
+    <p class="strap">Hər piksel bir <code>noul</code> sualıdır · ehtimal dither olur</p>
   </div>
-  <div class="masthead-right">
-    <span class="stamp" id="stamp">hazır</span>
-  </div>
+  <span class="stamp" id="stamp">hazır</span>
 </header>
 
 <section class="console">
   <div class="field">
     <label for="subject">MÖVZU</label>
     <input id="subject" type="text" autocomplete="off" spellcheck="false"
-           value="dağların arxasından doğan günəş, qabaqda tək bir ev"
-           placeholder="nə çəkilsin?">
+           value="green apple with a leaf" placeholder="nə çəkilsin?">
   </div>
 
   <div class="rowline">
     <div class="group">
-      <span class="grouplabel">REJİMLƏR</span>
+      <span class="grouplabel">ÖLÇÜLƏR</span>
       <div class="chips" id="modes">
-        <label class="chip"><input type="checkbox" value="cell" checked><span>Xana <em>16×15</em></span></label>
-        <label class="chip"><input type="checkbox" value="field" checked><span>Sahə <em>24×24</em></span></label>
-        <label class="chip"><input type="checkbox" value="vector" checked><span>Vektor <em>960px</em></span></label>
+        <label class="chip"><input type="checkbox" value="16" checked><span>16×16 <em>256</em></span></label>
+        <label class="chip"><input type="checkbox" value="32" checked><span>32×32 <em>1024</em></span></label>
+        <label class="chip"><input type="checkbox" value="64" checked><span>64×64 <em>4096</em></span></label>
       </div>
     </div>
 
     <div class="group">
-      <span class="grouplabel">MÜRƏKKƏB</span>
+      <span class="grouplabel">RƏNG</span>
       <div class="chips" id="ink">
-        <label class="chip radio"><input type="radio" name="ink" value="bw" checked><span>Ağ-qara</span></label>
+        <label class="chip radio"><input type="radio" name="ink" value="bw" checked><span>1-bit</span></label>
         <label class="chip radio"><input type="radio" name="ink" value="color"><span>JEV seçir</span></label>
       </div>
     </div>
@@ -55,7 +52,7 @@
 
 <main id="sheets" class="sheets"></main>
 
-<footer class="readout" id="readout">
+<footer class="readout">
   <span><b id="m-calls">0</b> çağırış</span>
   <span><b id="m-q">0</b> sual</span>
   <span><b id="m-tok">0</b> token</span>
@@ -75,13 +72,12 @@
     <div class="paper">
       <canvas class="layer under"></canvas>
       <canvas class="layer ink"></canvas>
-      <span class="reg tl"></span><span class="reg tr"></span>
-      <span class="reg bl"></span><span class="reg br"></span>
       <div class="working"><span></span></div>
     </div>
     <div class="sheet-foot">
       <span class="sf-lat">—</span>
       <span class="sf-call">—</span>
+      <a class="sf-dl" href="#" download hidden>PNG</a>
       <span class="sf-cost">—</span>
     </div>
     <ol class="log"></ol>

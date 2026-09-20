@@ -2,11 +2,13 @@
 
 # JEV Canvas
 
-**Ehtimalla rəsm çəkən plotter studiyası**
+**Hər piksel bir ehtimaldır**
 
-[JEV](https://docs.typesafe.ai/introduction) (TypeSafe System One) mətn yaratmır və piksel çəkmir —
-tipli dəyər və ehtimal paylanması qaytarır. Burada həmin paylanmaların özü rəsmə çevrilir:
-eyni mövzu üç fərqli fırça ilə, yanaşı çəkilir.
+[JEV](https://docs.typesafe.ai/introduction) (TypeSafe System One) mətn yaratmır və şəkil çəkmir —
+tipli dəyər və ehtimal paylanması qaytarır. Burada hər piksel ayrıca bir `noul` sualıdır,
+qayıdan ehtimal isə piksel artın öz dilinə — **dither sıxlığına** çevrilir.
+
+Eyni mövzu üç çözünürlükdə paralel çəkilir: **16×16 · 32×32 · 64×64**
 
 [![Node](https://img.shields.io/badge/Node.js-20+-3c873a?logo=node.js&logoColor=white)](https://nodejs.org)
 [![JEV](https://img.shields.io/badge/JEV-System_One-22d3ee)](https://docs.typesafe.ai)
@@ -15,61 +17,59 @@ eyni mövzu üç fərqli fırça ilə, yanaşı çəkilir.
 
 ---
 
-## Üç fırça
+## Necə işləyir
 
-| Rejim | Grid | Primitiv | Nə edir |
-| :--- | :--- | :--- | :--- |
-| **Xana** | 16×15 = 240 | `choice` | Hər addımda bir çağırış dörd qərar verir: nə · harada · nə boyda · bitdimi. Arxadakı nöqtə buludu — 240 xananın **hamısının** ehtimalı, təkcə qalibin deyil. |
-| **Ehtimal sahəsi** | 24×24 = 576 | `noul` | Bir çağırışda 576 ayrı "bu xana mürəkkəblidirmi?" sualı. Nöqtənin böyüklüyü **birbaşa ehtimaldır**. Rəngli rejimdə hər qələm üçün ayrı sahə — riso çapındakı rəng ayırmaları kimi. |
-| **Vektor** | 960 px | `score` | Şəbəkə yoxdur: mövqe, ölçü və döngə kəsilməz float-dur, çünki `score` səviyyələr **arasında** qala bilir. İki çağırış: hansı elementlər var, sonra hamısının koordinatı birdən. |
+| Ölçü | Sual | Çağırış | Tipik vaxt |
+| :--- | ---: | ---: | ---: |
+| 16×16 | 256 `noul` | 1 | ~0.4s |
+| 32×32 | 1 024 `noul` | 1 | ~0.5s |
+| 64×64 | 4 096 `noul` | 4 | ~1.2s |
 
-Rejimləri istədiyin kimi birləşdir — üçü də, ikisi, biri. Hamısı eyni mövzunu paralel çəkir.
+Sual həmişə eynidir: **`r=7,c=12 ink?`** — bu piksel obyektə aiddir, yoxsa fondur?
+Suallar bir sorğuda paralel qiymətləndirilir, ona görə 1024 sual bir sualdan demək olar
+sürətlidir. 64×64 = 4096 sual 64k kontekstə sığmadığı üçün dörd sətir zolağına bölünür;
+suallar onsuz da müstəqil olduğu üçün bölünmə nəticəyə təsir etmir.
 
-## Əminlik xəttin keyfiyyətidir
+Üç ölçü **eyni mövzunu müstəqil çəkir** — biri o birinin nəticəsini görmür.
 
-JEV hər qərarla birlikdə `confidence` qaytarır və bu, birbaşa qələmə ötürülür:
+## Ehtimal → dither
+
+1-bit piksel artda boz ton yoxdur; yarımton **nöqtə sıxlığı** ilə verilir. JEV-in qaytardığı
+ehtimal da elə budur, ona görə çevirmə birbaşadır:
 
 ```
-conf ≥ 0.70  →  tək, təmiz xətt
-0.40 – 0.70  →  iki keçid
-conf < 0.40  →  üç tərəddüdlü keçid, sürüşmə ilə
+ehtimal yüksək   →  dolu piksel
+ehtimal sərhəddə →  Bayer 4×4 naxışı (tərəddüd görünür)
+ehtimal aşağı    →  boş
 ```
 
-Yəni rəsmə baxanda modelin nədə əmin, nədə tərəddüdlü olduğunu görürsən. Vektor rejimində
-bu xüsusilə maraqlıdır: günəşin **üfüqi** mövqeyi üçün model çox vaxt ~0.00 əminlik verir —
-çünki günəşi sağa da, sola da qoysan doğrudur. Model "fərqi yoxdur"u özü bildirir.
+Sprite-ın kənarındakı şahmat naxışı bəzək deyil — modelin məhz orada qərarsız olduğu yerdir.
 
-## Mürəkkəb
+Üstünə iki addım əlavə olunur:
 
-İki rejim var: **ağ-qara** (tək qara qələm) və **JEV seçir** — bu halda qələmləri model özü
-seçir. 8 qələmlik karusel: qara, qırmızı, mavi, yaşıl, sarı, bənövşəyi, narıncı, çəhrayı.
+- **Təkpiksel təmizləmə** — iki qonşusu olmayan piksel silinir. Suallar müstəqil
+  qiymətləndirildiyi üçün obyektdən uzaqda ara-sıra "bəli" çıxır; bu səs-küydür.
+- **Kontur** — boş pikselə toxunan piksellər tündləşir. Piksel artın standart konturu.
+
+## Rəng
+
+**1-bit** rejimində tək qara mürəkkəb. **JEV seçir** rejimində model əvvəlcə palitranı
+seçir (əsas rəng, ikinci hissənin rəngi, aksent + "dördüncü rəng lazımdırmı?"), sonra
+hazır sprite ona ASCII kimi göstərilir və 8×8 bölgə üzrə rəng xəritəsi soruşulur.
+
+> **Dürüst qeyd:** rəng xəritəsi çox vaxt bütün bölgələr üçün eyni rəngi seçir. "Yaşıl alma"
+> üçün bu doğrudur, amma hissələri fərqli olan mövzularda da belə davranır. Palitra seçimi
+> düzgün işləyir, bölgə səviyyəsində fərqləndirmə isə zəifdir.
 
 ---
 
-## Ölçmələr
+## Ölçülmüş sərhədlər
 
-Grid ölçüləri təxminlə yox, ölçməklə seçilib. Eyni nöqtəvi forma müxtəlif çözünürlükdə
-çəkdirilib və "mürəkkəbli olmalı" ilə "boş olmalı" xanaların orta ehtimal fərqi ölçülüb
-(yüksək = daha aydın ayırdetmə):
+Bu layihə təxminlə yox, ölçməklə quruldu. Ən vacib üç nəticə:
 
-| Grid | Sual | diaqonal | sol yarım | dairə | **orta** | vaxt |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8×8 | 64 | 0.401 | 0.544 | 0.264 | 0.403 | 0.9s |
-| 16×16 | 256 | 0.410 | 0.558 | 0.224 | 0.397 | 0.4s |
-| **24×24** | 576 | **0.417** | 0.566 | 0.187 | 0.390 | 0.75s |
-| 32×32 | 1024 | 0.342 | 0.576 | 0.154 | 0.357 | 0.9s |
-
-**24×24 sərhəddir** — ondan sonra daha çox xana daha çox detal yox, daha çox səs-küy verir.
-Xüsusilə radial formalarda ayırdetmə monoton düşür.
-
-<details>
-<summary><b>Nə işləyir, nə işləmir</b> — piksel rejiminin sərhədi</summary>
-
-<br>
-
-Bütün suallar bir sorğuda **paralel** qiymətləndirilir — bir xana o birinin cavabını bilmir.
-Nəticə: **koordinatın nöqtəvi funksiyası** olan formalar əla alınır, **qlobal koordinasiya**
-tələb edənlər alınmır.
+**1. Piksel-piksel yanaşma yalnız müəyyən formalarda işləyir.** Bütün suallar paralel
+qiymətləndirilir — bir piksel o birinin cavabını bilmir. Koordinatın nöqtəvi funksiyası
+olan formalar əla alınır, qlobal koordinasiya tələb edənlər alınmır:
 
 ```
 "diaqonal xətt"  ✅              "böyük A hərfi"  ❌
@@ -77,20 +77,28 @@ tələb edənlər alınmır.
 .@:............                  ::-==+=====--::
 .=@-::.........                  .===+++=+=---:.
 .==@=::.....:.                   :=++**+====--:.
-.::+@=-:.::::..                  :=+++*+--==-::.
 ```
 
-İterativ düzəliş də xilas etmir — cari tuvalı state-ə qaytarıb 4 dövrə çəkdirəndə nəticə
-yenə ləkəyə yığılır. Ona görə tanınan rəsm **xana** və **vektor** rejimlərindən gəlir:
-həndəsəni kod çəkir, bütün kompozisiya qərarlarını isə JEV verir.
+Alma, ürək, ulduz kimi bütöv siluetlər yaxşı çıxır; hərf və mətn çıxmır.
 
-Buna baxmayaraq JEV tuvalı **oxuya bilir**: ASCII rəsmi state-ə verəndə balansı düzgün
-qiymətləndirir və dolu bölgələrə "bura daha nəsə lazımdır" ehtimalını aşağı verir.
+**2. Çözünürlük artdıqca ayırdetmə düşür.** Eyni formanı müxtəlif gridlərdə çəkdirib
+"dolu olmalı" və "boş olmalı" piksellərin orta ehtimal fərqini ölçdük:
 
-</details>
+| Grid | diaqonal | sol yarım | dairə | **orta** |
+| :--- | ---: | ---: | ---: | ---: |
+| 8×8 | 0.401 | 0.544 | 0.264 | 0.403 |
+| 16×16 | 0.410 | 0.558 | 0.224 | 0.397 |
+| 24×24 | 0.417 | 0.566 | 0.187 | 0.390 |
+| 32×32 | 0.342 | 0.576 | 0.154 | 0.357 |
+
+64×64-də səs-küy daha da artır — ona görə təkpiksel təmizləmə var.
+
+**3. Kaskad kömək etmir.** 16×16 nəticəsini 32×32 sualına kontekst kimi verəndə nəticə
+**pisləşdi** — sprite yerindən sürüşdü və dağıldı. Müstəqil çəkiliş daha yaxşıdır, ona görə
+üç ölçü paralel və bir-birindən xəbərsiz işləyir.
 
 <details>
-<summary><b>API limitləri</b> — ölçülmüş, sənədlə təsdiqlənmiş</summary>
+<summary><b>API limitləri</b></summary>
 
 <br>
 
@@ -103,7 +111,7 @@ qiymətləndirir və dolu bölgələrə "bura daha nəsə lazımdır" ehtimalın
 | Sürət limiti | 1200 sorğu/dəq, 250k token/san |
 | Giriş | yalnız mətn |
 
-Bütöv bir rəsm sessiyası (üç rejim birlikdə) ~$0.003.
+Üç ölçü birlikdə, rəngli rejimdə bir sprite dəsti ≈ **$0.004**.
 
 </details>
 
@@ -126,23 +134,20 @@ npm start
 | `JEV_API_KEY` | bəli | [console.typesafe.ai](https://console.typesafe.ai/settings/keys) |
 | `PORT` | xeyr | Standart: `3200` |
 
----
+Hər sprite öz çözünürlüyündə PNG kimi yüklənə bilər — 16×16 sprite 16×16 piksel fayl olur.
 
 ## Necə qurulub
 
 ```
-server.js                 Express — JEV proxy-si, keep-alive agent, xərc hesabı
+server.js          Express — JEV proxy-si, keep-alive agent, xərc hesabı
 public/
-  index.html              Vərəq şablonu və konsol
-  style.css               Plotter studiyası — krem kağız, registrasiya nişanları
-  app.js                  Rejimləri paralel işə salır, ölçmələri toplayır
-  jev.js                  Proxy müştərisi + sessiya ölçmələri
-  paper.js                Tuval: əminliyə görə ştrix, yarımton, ehtimal buludu
-  primitives.js           8 qələm · 34 primitiv forma lüğəti
-  engines/
-    cell.js               16×15 · choice
-    field.js              24×24 · noul
-    vector.js             960px · score
+  index.html       Konsol və vərəq şablonu
+  style.css        Piksel studiyası — şahmat fon, monospace qeydlər
+  app.js           Ölçüləri paralel işə salır, ölçmələri toplayır
+  jev.js           Proxy müştərisi + sessiya ölçmələri
+  paper.js         N×N offscreen → nearest-neighbor böyütmə, dither, kontur
+  pixel.js         Motor: palitra → quruluş zolaqları → rəng xəritəsi
+  palette.js       12 rəngli palitra
 ```
 
 API açarı heç vaxt frontend-ə göndərilmir — bütün çağırışlar `/api/jev` üzərindən keçir.

@@ -1,11 +1,11 @@
-/* JEV CANVAS — plotter studiyası
-   Krem kağız, incə mürəkkəb, texniki qeydlər. Kölgə yoxdur, gradient yoxdur,
-   yalnız kağız, xətt və registrasiya nişanları. */
+/* JEV CANVAS — piksel studiyası
+   Kağız rəngli masa, ağ tuval, şəffaflıq şahmatı. Kölgə yoxdur, gradient yoxdur;
+   bütün hərəkət sprite-ın içindədir. */
 
 :root {
   --desk:      #ded8c8;
   --desk-line: #cfc8b4;
-  --paper:     #f5f1e6;
+  --paper:     #ffffff;
   --paper-2:   #ebe5d6;
   --ink:       #16150f;
   --muted:     #8a8373;
@@ -217,46 +217,16 @@ body > * { position: relative; z-index: 1; }
   overflow: hidden;
 }
 
-/* kağız dənəsi */
-.paper::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: .28;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
-}
-
 .layer {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 .layer.under { z-index: 1; }
 .layer.ink   { z-index: 2; }
-
-/* registrasiya nişanları */
-.reg {
-  position: absolute;
-  width: 13px;
-  height: 13px;
-  z-index: 3;
-  pointer-events: none;
-  opacity: .55;
-}
-.reg::before, .reg::after {
-  content: "";
-  position: absolute;
-  background: var(--red);
-}
-.reg::before { left: 6px; top: 0; width: 1px; height: 13px; }
-.reg::after  { top: 6px; left: 0; height: 1px; width: 13px; }
-.reg.tl { left: 7px;  top: 7px; }
-.reg.tr { right: 7px; top: 7px; }
-.reg.bl { left: 7px;  bottom: 7px; }
-.reg.br { right: 7px; bottom: 7px; }
 
 .working {
   position: absolute;
@@ -289,6 +259,13 @@ body > * { position: relative; z-index: 1; }
   color: var(--muted);
 }
 .sheet-foot span:last-child { margin-left: auto; }
+.sf-dl {
+  color: var(--red);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  letter-spacing: .14em;
+}
+.sf-dl:hover { color: var(--ink); }
 
 /* ---------- jurnal ---------- */
 
@@ -310,7 +287,16 @@ body > * { position: relative; z-index: 1; }
 }
 .log .n { color: var(--muted); font-size: 10px; }
 .log .what { color: var(--ink); }
-.log .what i { font-style: normal; color: var(--muted); }
+.log .what i.dim { font-style: normal; color: var(--muted); }
+
+/* palitra nümunələri */
+.swatches { display: inline-flex; gap: 2px; margin-left: 7px; vertical-align: middle; }
+.swatches i {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(0, 0, 0, .25);
+}
 .log .p { color: var(--red); font-variant-numeric: tabular-nums; }
 .log li.done .what { color: var(--muted); letter-spacing: .1em; text-transform: uppercase; font-size: 10px; }
 .log li.err .what { color: var(--red); }

@@ -1,216 +1,165 @@
 /**
- * Kağız — bir tuvalın üzərindəki bütün çəkiliş əməliyyatları.
+ * Piksel tuvalı.
  *
- * Əsas fikir: JEV-in `confidence` dəyəri xəttin keyfiyyətini idarə edir.
- * Əmin qərar tək, təmiz xətlə çəkilir; tərəddüdlü qərar bir neçə dəfə,
- * sürüşmə ilə — plotter qələminin tərəddüd etdiyi kimi.
+ * Offscreen tam N×N-dir — hər JEV sualı bir real pikseldir. Görünən tuvala
+ * nearest-neighbor ilə böyüdülür, ona görə kənarlar kəsgin qalır.
+ *
+ * Əsas fikir: ehtimal boz tona yox, **dither sıxlığına** çevrilir. 1-bit piksel
+ * artda yarımton elə belə verilir; JEV-in qaytardığı ehtimal da elə budur.
+ * Əmin piksel dolu, sərhəddəki tərəddüdlü piksel seyrək naxış olur.
  */
 
-const SIZE = 960;
+const OUT = 960; // görünən tuvalın məntiqi ölçüsü
 
-/** Təkrarlana bilən təsadüf — eyni rəsm yenidən çəkiləndə eyni görünsün. */
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+/** Bayer 4×4 — sıralı dither eşikləri. */
+const BAYER = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+];
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
 export class Paper {
   /**
-   * @param canvas mürəkkəb qatı — çəkilən rəsm burada yığılır
-   * @param under  alt qat (istəyə bağlı) — ehtimal xəritəsi və şəbəkə; hər addımda təmizlənir,
-   *               beləcə istilik ləkəsi yalnız *cari* qərarı göstərir, rəsmi isə yumur.
+   * @param canvas görünən sprite qatı
+   * @param under  alt qat — şəffaflıq şahmatı
+   * @param N      sprite çözünürlüyü (16, 32, 64…)
    */
-  constructor(canvas, { seed = 7, under = null } = {}) {
+  constructor(canvas, { under = null, N = 32 } = {}) {
+    this.N = N;
     this.canvas = canvas;
-    this.underCanvas = under;
-    this.size = SIZE;
-    this.seed = seed;
-    this.ctx = canvas.getContext("2d");
-    this.uctx = under ? under.getContext("2d") : this.ctx;
-    this.resize();
-    this.clear();
-    this.clearUnder();
-  }
-
-  resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    for (const el of [this.canvas, this.underCanvas]) {
-      if (!el) continue;
-      el.width = SIZE * dpr;
-      el.height = SIZE * dpr;
-      el.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.w = OUT * dpr;
+
+    canvas.width = canvas.height = this.w;
+    this.view = canvas.getContext("2d");
+    this.view.imageSmoothingEnabled = false;
+
+    this.off = document.createElement("canvas");
+    this.off.width = this.off.height = N;
+    this.octx = this.off.getContext("2d", { willReadFrequently: true });
+
+    if (under) {
+      under.width = under.height = this.w;
+      this.uctx = under.getContext("2d");
+      this.uctx.imageSmoothingEnabled = false;
     }
-    this.dpr = dpr;
+
+    this.clear();
+    this.checkerboard();
   }
 
   clear() {
-    const { ctx } = this;
-    this.rnd = mulberry32(this.seed);
-    ctx.save();
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.clearRect(0, 0, SIZE, SIZE);
-    ctx.restore();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    this.octx.clearRect(0, 0, this.N, this.N);
+    this.blit();
   }
 
-  clearUnder() {
-    if (!this.underCanvas) return;
-    const { uctx } = this;
-    uctx.save();
-    uctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    uctx.clearRect(0, 0, SIZE, SIZE);
-    uctx.restore();
+  /** Offscreen-i görünən tuvala böyüdür — hamarlama olmadan. */
+  blit() {
+    const v = this.view;
+    v.clearRect(0, 0, this.w, this.w);
+    v.imageSmoothingEnabled = false;
+    v.drawImage(this.off, 0, 0, this.w, this.w);
   }
 
-  // --- mürəkkəb -----------------------------------------------------------
-
-  /**
-   * Bir yolu əminliyə uyğun çəkir.
-   * conf ≥ 0.7 → tək təmiz xətt · 0.4–0.7 → iki keçid · < 0.4 → üç tərəddüdlü keçid
-   */
-  ink(pathFn, { confidence = 1, pen = "#16150f", width = 2.2, alpha = 1 } = {}) {
-    const conf = Math.max(0, Math.min(1, confidence));
-    const passes = conf >= 0.7 ? 1 : conf >= 0.4 ? 2 : 3;
-    const jitter = (1 - conf) * 5.5;
-    const { ctx } = this;
-
-    ctx.save();
-    ctx.strokeStyle = pen;
-    ctx.lineWidth = width;
-    for (let i = 0; i < passes; i++) {
-      const ox = i === 0 ? 0 : (this.rnd() - 0.5) * jitter;
-      const oy = i === 0 ? 0 : (this.rnd() - 0.5) * jitter;
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.globalAlpha = alpha * (i === 0 ? 1 : 0.55);
-      ctx.beginPath();
-      pathFn(ctx);
-      ctx.stroke();
-      ctx.restore();
-    }
-    ctx.restore();
-  }
-
-  /** Primitivi verilmiş nöqtədə çəkir. r — yarım ölçü (piksel). */
-  drawPrimitive(prim, x, y, r, { confidence = 1, rotation = 0, pen = "#16150f", width = 2.2 } = {}) {
-    const { ctx } = this;
-    ctx.save();
-    ctx.translate(x, y);
-    if (rotation) ctx.rotate(rotation);
-    prim.draw(ctx, r, (fn) => this.ink(fn, { confidence, pen, width }));
-    ctx.restore();
-  }
-
-  // --- ehtimal vizualı -----------------------------------------------------
-
-  /**
-   * Yarımton sahəsi: hər xana ehtimalı qədər böyük nöqtə.
-   * Riso çapındakı kimi — ehtimal nə qədər yüksəkdirsə nöqtə bir o qədər dolğun.
-   */
-  halftone(values, { cols, rows, pen = "#16150f", offset = [0, 0], gamma = 1.35, max = 1, min = 0 } = {}) {
-    const { ctx } = this;
-    const cw = SIZE / cols;
-    const ch = SIZE / rows;
-    const rMax = Math.min(cw, ch) * 0.52;
-    ctx.save();
-    ctx.fillStyle = pen;
-    ctx.globalAlpha = 0.88;
-    ctx.globalCompositeOperation = "multiply";
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const span = Math.max(1e-6, max - min);
-        const v = Math.max(0, Math.min(1, (values[r][c] - min) / span));
-        const rad = Math.pow(v, gamma) * rMax;
-        if (rad < 0.35) continue;
-        ctx.beginPath();
-        ctx.arc(offset[0] + (c + 0.5) * cw, offset[1] + (r + 0.5) * ch, rad, 0, Math.PI * 2);
-        ctx.fill();
+  /** Şəffaf sahə — piksel redaktorlarındakı şahmat. */
+  checkerboard(step = 16) {
+    if (!this.uctx) return;
+    const ctx = this.uctx;
+    const n = step;
+    const cell = this.w / n;
+    ctx.clearRect(0, 0, this.w, this.w);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, this.w, this.w);
+    ctx.fillStyle = "#f2eee3";
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if ((r + c) % 2) ctx.fillRect(c * cell, r * cell, cell, cell);
       }
     }
-    ctx.restore();
   }
 
-  /** Ehtimal buludu — "harada?" sualının paylanması, nöqtə sıxlığı kimi. */
-  heat(values, { cols, rows, pen = "#b4402e", max = null, alpha = 0.3, gamma = 0.45 } = {}) {
-    const ctx = this.uctx;
-    const cw = SIZE / cols;
-    const ch = SIZE / rows;
-    const peak = max ?? Math.max(...values.flat());
-    if (!peak) return;
-    const rMax = Math.min(cw, ch) * 0.46;
-    ctx.save();
-    ctx.fillStyle = pen;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const v = values[r][c] / peak;
-        if (v < 0.012) continue;
-        const t = Math.pow(v, gamma);
-        ctx.globalAlpha = alpha * Math.min(1, 0.35 + t * 0.65);
-        ctx.beginPath();
-        ctx.arc((c + 0.5) * cw, (r + 0.5) * ch, Math.max(0.8, t * rMax), 0, Math.PI * 2);
-        ctx.fill();
+  /**
+   * Ehtimal matrisini sprite kimi çəkir.
+   *
+   * @param values   N×N ehtimal
+   * @param colorAt  (r,c) → hex; rəng xəritəsi (ağ-qarada sabit)
+   * @param lo,hi    kontrast dartması üçün aralıq
+   * @param floor/solid  dither zolağı. Dar saxlanılır: geniş zolaqda bütün sprite
+   *                     şahmata dönür, dar zolaqda isə yalnız sərhəd tərəddüdlü qalır.
+   * @param outline  kənar piksellər tündləşsin
+   */
+  drawSprite(values, { colorAt, lo = 0, hi = 1, floor = 0.45, solid = 0.70, outline = true } = {}) {
+    const { N, octx } = this;
+    const span = Math.max(1e-6, hi - lo);
+    const band = Math.max(1e-6, solid - floor);
+
+    // 1) ehtimal → maska. Dither zolağı yalnız sərhədə düşür.
+    const mask = [...Array(N)].map(() => new Uint8Array(N));
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        const t = Math.max(0, Math.min(1, (values[r][c] - lo) / span));
+        const v = Math.max(0, Math.min(1, (t - floor) / band));
+        if (v <= 0) continue;
+        if (v < 1 && v <= (BAYER[r & 3][c & 3] + 0.5) / 16) continue;
+        mask[r][c] = 1;
       }
     }
-    ctx.restore();
+
+    // 2) tək qalmış pikselləri təmizlə. Suallar müstəqil qiymətləndirildiyi üçün
+    //    obyektdən uzaqda ara-sıra "bəli" çıxır; iki qonşusu olmayan piksel səs-küydür.
+    const clean = mask.map((row) => row.slice());
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        if (!mask[r][c]) continue;
+        let n = 0;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if ((dr || dc) && mask[r + dr]?.[c + dc]) n++;
+          }
+        }
+        if (n < 2) clean[r][c] = 0;
+      }
+    }
+
+    // 3) rənglə. Kənar piksellər tündləşir — piksel artdakı kontur.
+    const img = octx.createImageData(N, N);
+    const d = img.data;
+    const cache = new Map();
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        if (!clean[r][c]) continue;
+        const edge =
+          outline &&
+          (!clean[r - 1]?.[c] || !clean[r + 1]?.[c] || !clean[r]?.[c - 1] || !clean[r]?.[c + 1]);
+        const hex = colorAt(r, c);
+        const key = edge ? hex + "|e" : hex;
+        let rgb = cache.get(key);
+        if (!rgb) {
+          rgb = hexToRgb(hex);
+          if (edge) rgb = rgb.map((x) => Math.round(x * 0.52));
+          cache.set(key, rgb);
+        }
+        const i = (r * N + c) * 4;
+        d[i] = rgb[0];
+        d[i + 1] = rgb[1];
+        d[i + 2] = rgb[2];
+        d[i + 3] = 255;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    this.blit();
   }
 
-  /** Nazik qərar şəbəkəsi — hansı gridlə işlədiyimiz görünsün. */
-  gridOverlay(cols, rows, { pen = "#16150f", alpha = 0.1 } = {}) {
-    const ctx = this.uctx;
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = pen;
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    for (let c = 0; c <= cols; c++) {
-      const x = Math.round((SIZE / cols) * c) + 0.5;
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, SIZE);
-    }
-    for (let r = 0; r <= rows; r++) {
-      const y = Math.round((SIZE / rows) * r) + 0.5;
-      ctx.moveTo(0, y);
-      ctx.lineTo(SIZE, y);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  /** Seçilmiş xananın ətrafındakı nişan — hansı xana qazandı. */
-  markCell(col, row, cols, rows, { pen = "#b4402e" } = {}) {
-    const ctx = this.uctx;
-    const cw = SIZE / cols;
-    const ch = SIZE / rows;
-    const x = col * cw;
-    const y = row * ch;
-    const t = Math.min(cw, ch) * 0.28;
-    ctx.save();
-    ctx.strokeStyle = pen;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (const [cx, cy, dx, dy] of [
-      [x, y, 1, 1],
-      [x + cw, y, -1, 1],
-      [x, y + ch, 1, -1],
-      [x + cw, y + ch, -1, -1],
-    ]) {
-      ctx.moveTo(cx + dx * t, cy);
-      ctx.lineTo(cx, cy);
-      ctx.lineTo(cx, cy + dy * t);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-
+  /** PNG — sprite öz çözünürlüyündə, böyüdülmədən. */
   toDataURL() {
-    return this.canvas.toDataURL("image/png");
+    return this.off.toDataURL("image/png");
   }
 }
 
-export const PAPER_SIZE = SIZE;
+export const OUT_SIZE = OUT;
