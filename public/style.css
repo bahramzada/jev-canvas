@@ -1,0 +1,354 @@
+/* JEV CANVAS — plotter studiyası
+   Krem kağız, incə mürəkkəb, texniki qeydlər. Kölgə yoxdur, gradient yoxdur,
+   yalnız kağız, xətt və registrasiya nişanları. */
+
+:root {
+  --desk:      #ded8c8;
+  --desk-line: #cfc8b4;
+  --paper:     #f5f1e6;
+  --paper-2:   #ebe5d6;
+  --ink:       #16150f;
+  --muted:     #8a8373;
+  --rule:      #cbc3b0;
+  --red:       #b4402e;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--desk);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* masa üzərindəki incə şəbəkə */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--desk-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--desk-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: .5;
+  z-index: 0;
+}
+
+body > * { position: relative; z-index: 1; }
+
+/* ---------- başlıq ---------- */
+
+.masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px 24px 14px;
+  border-bottom: 1px solid var(--ink);
+  margin: 0 16px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: clamp(26px, 5vw, 46px);
+  font-weight: 600;
+  letter-spacing: .26em;
+  line-height: 1;
+}
+
+.strap {
+  margin: 8px 0 0;
+  color: var(--muted);
+  letter-spacing: .06em;
+}
+
+.stamp {
+  display: inline-block;
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 4px 10px;
+  text-transform: uppercase;
+  letter-spacing: .18em;
+  font-size: 10px;
+  transform: rotate(-1.5deg);
+  white-space: nowrap;
+}
+.stamp.busy { border-style: dashed; }
+
+/* ---------- konsol ---------- */
+
+.console {
+  margin: 0 16px;
+  padding: 18px 24px 20px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.field label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: .2em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+#subject {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ink);
+  padding: 6px 2px 10px;
+  font-family: inherit;
+  font-size: clamp(15px, 2.2vw, 20px);
+  color: var(--ink);
+}
+#subject:focus { outline: none; border-bottom-width: 2px; padding-bottom: 9px; }
+#subject::placeholder { color: var(--muted); }
+
+.rowline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  align-items: flex-end;
+  margin-top: 18px;
+}
+
+.grouplabel {
+  display: block;
+  font-size: 10px;
+  letter-spacing: .2em;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.chip { cursor: pointer; user-select: none; }
+.chip input { position: absolute; opacity: 0; pointer-events: none; }
+
+.chip span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  border: 1px solid var(--rule);
+  padding: 7px 12px;
+  color: var(--muted);
+  letter-spacing: .04em;
+  transition: none;
+}
+.chip em { font-style: normal; font-size: 10px; opacity: .8; }
+.chip:hover span { border-color: var(--ink); color: var(--ink); }
+.chip input:checked + span {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.actions { display: flex; gap: 8px; margin-left: auto; }
+
+.btn {
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: 9px 18px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.btn.primary { background: var(--ink); color: var(--paper); }
+.btn.primary:hover:not(:disabled) { background: var(--red); border-color: var(--red); }
+.btn.ghost { border-color: var(--rule); color: var(--muted); }
+.btn:disabled { opacity: .35; cursor: default; }
+
+/* ---------- vərəqlər ---------- */
+
+.sheets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 22px 40px 28px;
+  align-items: flex-start;
+}
+
+.sheet {
+  flex: 1 1 340px;
+  min-width: 300px;
+  max-width: 560px;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 5px;
+}
+.sheet-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+}
+.sheet-grid { font-size: 11px; color: var(--red); letter-spacing: .1em; }
+
+.sheet-note {
+  margin: 8px 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  min-height: 3.2em;
+}
+
+.paper {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  overflow: hidden;
+}
+
+/* kağız dənəsi */
+.paper::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .28;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.layer.under { z-index: 1; }
+.layer.ink   { z-index: 2; }
+
+/* registrasiya nişanları */
+.reg {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  z-index: 3;
+  pointer-events: none;
+  opacity: .55;
+}
+.reg::before, .reg::after {
+  content: "";
+  position: absolute;
+  background: var(--red);
+}
+.reg::before { left: 6px; top: 0; width: 1px; height: 13px; }
+.reg::after  { top: 6px; left: 0; height: 1px; width: 13px; }
+.reg.tl { left: 7px;  top: 7px; }
+.reg.tr { right: 7px; top: 7px; }
+.reg.bl { left: 7px;  bottom: 7px; }
+.reg.br { right: 7px; bottom: 7px; }
+
+.working {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 4;
+  height: 2px;
+  background: var(--rule);
+  opacity: 0;
+}
+.working span {
+  display: block;
+  height: 100%;
+  width: 34%;
+  background: var(--red);
+  animation: sweep 1.15s ease-in-out infinite;
+}
+.sheet.busy .working { opacity: 1; }
+@keyframes sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(295%); }
+}
+
+.sheet-foot {
+  display: flex;
+  gap: 14px;
+  padding: 7px 1px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+.sheet-foot span:last-child { margin-left: auto; }
+
+/* ---------- jurnal ---------- */
+
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0;
+  max-height: 188px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.log li {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px dotted var(--rule);
+}
+.log .n { color: var(--muted); font-size: 10px; }
+.log .what { color: var(--ink); }
+.log .what i { font-style: normal; color: var(--muted); }
+.log .p { color: var(--red); font-variant-numeric: tabular-nums; }
+.log li.done .what { color: var(--muted); letter-spacing: .1em; text-transform: uppercase; font-size: 10px; }
+.log li.err .what { color: var(--red); }
+
+/* əminlik zolağı */
+.confbar {
+  display: inline-block;
+  width: 34px;
+  height: 4px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.confbar i { display: block; height: 100%; background: var(--ink); }
+
+/* ---------- alt oxunuş ---------- */
+
+.readout {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0 16px;
+  padding: 12px 24px 26px;
+  border-top: 1px solid var(--ink);
+  font-size: 11px;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.readout b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.readout .spacer { flex: 1; }
+.readout .muted { color: var(--muted); opacity: .8; }
+
+@media (max-width: 760px) {
+  .sheets { padding: 18px 16px 24px; }
+  .masthead, .console, .readout { margin: 0 8px; }
+  .console { padding: 16px 12px; }
+  .masthead { padding: 20px 12px 12px; }
+  .actions { margin-left: 0; }
+}
