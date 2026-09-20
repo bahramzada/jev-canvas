@@ -85,29 +85,45 @@ export class Paper {
   }
 
   /**
-   * Ehtimal matrisini sprite kimi çəkir.
+   * SDF dərinlik sahəsini sprite kimi çəkir.
    *
-   * @param values   N×N ehtimal
-   * @param colorAt  (r,c) → hex; rəng xəritəsi (ağ-qarada sabit)
-   * @param lo,hi    kontrast dartması üçün aralıq
-   * @param floor/solid  dither zolağı. Dar saxlanılır: geniş zolaqda bütün sprite
-   *                     şahmata dönür, dar zolaqda isə yalnız sərhəd tərəddüdlü qalır.
+   * Sahə mütləq şkaladadır (0 = obyektdən uzaq, 4 = dərində), ona görə kontrast
+   * dartmasına ehtiyac yoxdur — `surface` sabit sıfır xəttidir. Bu, köhnə
+   * min–maks dartmasından daha sabitdir: boş tuval və ya zəif sahə artıq
+   * süni şəkildə "şişirdilmir".
+   *
+   * @param field    N×N dərinlik (score cavabı, arada float)
+   * @param colorAt  (r,c) → hex
+   * @param surface  sıfır xətti — bundan yuxarısı obyektin içidir
+   * @param soft     dither zolağının yarı eni. Dar saxlanılır ki, yalnız sərhəd
+   *                 tərəddüdlü qalsın: 32×32-də sahənin dinamik aralığı daralır
+   *                 (ölçmə: 0.36–3.27, 16×16-da 0.40–3.63) və geniş zolaqda
+   *                 sprite-ın yarısı şahmata düşürdü.
    * @param outline  kənar piksellər tündləşsin
    */
-  drawSprite(values, { colorAt, lo = 0, hi = 1, floor = 0.45, solid = 0.70, outline = true } = {}) {
+  drawSprite(field, { colorAt, surface = 2.5, soft = 0.55, outline = true } = {}) {
     const { N, octx } = this;
-    const span = Math.max(1e-6, hi - lo);
-    const band = Math.max(1e-6, solid - floor);
+    // Zolaq asimmetrikdir: dolu nüvə tam `surface` konturudur, dither isə ondan
+    // KƏNARA uzanır. Simmetrik zolaqda nüvə surface+soft konturuna sürüşürdü və
+    // sprite ölçmədə yaxşı çıxan formadan nəzərəçarpacaq dərəcədə nazik olurdu.
+    const band = Math.max(1e-6, soft);
+    const lo = surface - band;
 
-    // 1) ehtimal → maska. Dither zolağı yalnız sərhədə düşür.
+    // 1) dərinlik → maska. Sərhəd zolağı dither olur, içəri tam dolu.
+    //    `core` yalnız tam dolu pikselləri saxlayır — kontur ondan hesablanır,
+    //    yoxsa dither zolağının hər pikseli "kənar" sayılıb tündləşirdi və
+    //    sprite-ın ətrafında qaralmış səpinti əmələ gəlirdi.
     const mask = [...Array(N)].map(() => new Uint8Array(N));
+    const core = [...Array(N)].map(() => new Uint8Array(N));
     for (let r = 0; r < N; r++) {
       for (let c = 0; c < N; c++) {
-        const t = Math.max(0, Math.min(1, (values[r][c] - lo) / span));
-        const v = Math.max(0, Math.min(1, (t - floor) / band));
+        const v = Math.max(0, Math.min(1, (field[r][c] - lo) / band));
         if (v <= 0) continue;
-        if (v < 1 && v <= (BAYER[r & 3][c & 3] + 0.5) / 16) continue;
-        mask[r][c] = 1;
+        if (v >= 1) {
+          mask[r][c] = core[r][c] = 1;
+        } else if (v > (BAYER[r & 3][c & 3] + 0.5) / 16) {
+          mask[r][c] = 1;
+        }
       }
     }
 
@@ -136,6 +152,7 @@ export class Paper {
         if (!clean[r][c]) continue;
         const edge =
           outline &&
+          core[r][c] &&
           (!clean[r - 1]?.[c] || !clean[r + 1]?.[c] || !clean[r]?.[c - 1] || !clean[r]?.[c + 1]);
         const hex = colorAt(r, c);
         const key = edge ? hex + "|e" : hex;

@@ -2,11 +2,12 @@
 
 # JEV Canvas
 
-**Hər piksel bir ehtimaldır**
+**Dərinlik sahəsindən piksel art**
 
 [JEV](https://docs.typesafe.ai/introduction) (TypeSafe System One) mətn yaratmır və şəkil çəkmir —
-tipli dəyər və ehtimal paylanması qaytarır. Burada hər piksel ayrıca bir `noul` sualıdır,
-qayıdan ehtimal isə piksel artın öz dilinə — **dither sıxlığına** çevrilir.
+tipli dəyər və ehtimal paylanması qaytarır. Burada hər piksel bir `score` sualıdır:
+**«sən obyektin nə qədər dərinindəsən?»** Cavab kəsilməz bir dərinlik sahəsidir (SDF),
+sprite isə o sahənin kontur xəttidir.
 
 Eyni mövzu üç çözünürlükdə paralel çəkilir: **16×16 · 32×32 · 64×64**
 
@@ -17,85 +18,96 @@ Eyni mövzu üç çözünürlükdə paralel çəkilir: **16×16 · 32×32 · 64�
 
 ---
 
-## Necə işləyir
+## Niyə `noul` yox, `score`
 
-| Ölçü | Sual | Çağırış | Tipik vaxt |
+İlk versiya hər pikselə `noul` verirdi — "bu piksel mürəkkəblidirmi?". Problem strukturaldır:
+suallar bir sorğuda **paralel** qiymətləndirilir, bir piksel o birinin cavabını bilmir.
+Nəticədə model **marjinal paylanma** qaytarır — "bütün mümkün almaların ortalaması", konkret
+bir alma yox. Ortalama isə tərifinə görə bulanıqdır, sərhəd səs-küylü çıxır.
+
+Bunu daha çox nümunə götürməklə düzəltmək mümkün deyil: JEV özü ilə demək olar tam uyğundur
+([std 0.0102](https://docs.typesafe.ai/cookbooks/consistency_noul_cookbook.md), LLM-lərdə 0.30–0.70),
+yəni cavab determinikdir. Yeganə lever — **sualın özünü dəyişmək**.
+
+`score` rubrikası beş səviyyəlidir və cavab səviyyələr **arasında** qala bilir:
+
+```
+0  çöldə, fondan uzaq
+1  konturun bayır tərəfində
+2  düz konturun üstündə
+3  içəridə, kənara yaxın
+4  dərində
+```
+
+Ölçülmüş fərq (32×32, "red apple with a green leaf"; kompaktlıq = perimetr²/4πsahə, aşağı = təmiz):
+
+| Üsul | Kompaktlıq↓ | Komponent↓ | Təkpiksel↓ |
 | :--- | ---: | ---: | ---: |
-| 16×16 | 256 `noul` | 1 | ~0.4s |
-| 32×32 | 1 024 `noul` | 1 | ~0.5s |
-| 64×64 | 4 096 `noul` | 4 | ~1.2s |
+| `noul` (köhnə) | 4.29 | 2 | 1.3% |
+| **`score`-SDF** | **3.03** | **1** | **0.8%** |
 
-Sual həmişə eynidir: **`r=7,c=12 ink?`** — bu piksel obyektə aiddir, yoxsa fondur?
-Suallar bir sorğuda paralel qiymətləndirilir, ona görə 1024 sual bir sualdan demək olar
-sürətlidir. 64×64 = 4096 sual 64k kontekstə sığmadığı üçün dörd sətir zolağına bölünür;
-suallar onsuz da müstəqil olduğu üçün bölünmə nəticəyə təsir etmir.
+## Niyə 64×64 birbaşa soruşulmur
 
-Üç ölçü **eyni mövzunu müstəqil çəkir** — biri o birinin nəticəsini görmür.
+4096 sual modelin ayırdetmə gücünü aşır. Ölçdük:
+
+| 64×64 | Kompaktlıq | Komponent | Qiymət |
+| :--- | ---: | ---: | ---: |
+| Birbaşa 4096 sual | 17.44 | **15** | $0.0137 |
+| **32×32 SDF → bilinear** | **3.05** | **1** | **$0.0034** |
+
+Birbaşa soruşulan 64×64 on beş ayrı parçaya dağılır. SDF isə kəsilməz sahədir — 32×32-də
+soruşulub interpolyasiya ilə böyüdülür və tək, təmiz sprite verir, üstəlik dörd dəfə ucuz.
+Şrift renderi SDF-i məhz buna görə işlədir.
+
+> Bu o deməkdir ki **64×64 heç vaxt 32×32-dən çox məlumat daşımır** — interpolyasiya kənarı
+> hamarlayır, detal əlavə etmir. Vərəqin başlığında bu açıq yazılır: `32×32 soruşulur → 64×64 render`.
+
+## Rəng: hər rəngə öz sahəsi
+
+Palitra seçildikdən sonra **hər rəng üçün ayrıca SDF** soruşulur — "bu piksel yaşıl sahənin
+nə qədər dərinindədir?" — sonra sahələr **öz aralığına normallaşdırılır** və piksel argmax-a gedir.
+
+Normallaşdırma həlledicidir. Ölçmədə:
+
+```
+gövdə (qırmızı):  max = 3.88
+yarpaq (yaşıl):   max = 1.34   ← mütləq eşiklə tamamilə itirdi
+sap (qəhvəyi):    max = 0.82   ← eyni
+```
+
+Kiçik hissələrin **yeri düzgündür**, sadəcə mütləq dəyəri aşağıdır. Köhnə 8×8 bölgə xəritəsi
+hissələri mütləq müqayisə etdiyi üçün həmişə bir rəng seçirdi; normallaşdırılmış argmax isə
+yarpağı düz yerinə qoyur.
+
+Rəng sahələri 16×16-da soruşulur — rəng bölgələri alçaq tezliklidir, forma qədər dəqiqlik istəmir.
 
 ## Ehtimal → dither
 
-1-bit piksel artda boz ton yoxdur; yarımton **nöqtə sıxlığı** ilə verilir. JEV-in qaytardığı
-ehtimal da elə budur, ona görə çevirmə birbaşadır:
-
-```
-ehtimal yüksək   →  dolu piksel
-ehtimal sərhəddə →  Bayer 4×4 naxışı (tərəddüd görünür)
-ehtimal aşağı    →  boş
-```
-
-Sprite-ın kənarındakı şahmat naxışı bəzək deyil — modelin məhz orada qərarsız olduğu yerdir.
-
-Üstünə iki addım əlavə olunur:
-
-- **Təkpiksel təmizləmə** — iki qonşusu olmayan piksel silinir. Suallar müstəqil
-  qiymətləndirildiyi üçün obyektdən uzaqda ara-sıra "bəli" çıxır; bu səs-küydür.
-- **Kontur** — boş pikselə toxunan piksellər tündləşir. Piksel artın standart konturu.
-
-## Rəng
-
-**1-bit** rejimində tək qara mürəkkəb. **JEV seçir** rejimində model əvvəlcə palitranı
-seçir (əsas rəng, ikinci hissənin rəngi, aksent + "dördüncü rəng lazımdırmı?"), sonra
-hazır sprite ona ASCII kimi göstərilir və 8×8 bölgə üzrə rəng xəritəsi soruşulur.
-
-> **Dürüst qeyd:** rəng xəritəsi çox vaxt bütün bölgələr üçün eyni rəngi seçir. "Yaşıl alma"
-> üçün bu doğrudur, amma hissələri fərqli olan mövzularda da belə davranır. Palitra seçimi
-> düzgün işləyir, bölgə səviyyəsində fərqləndirmə isə zəifdir.
+Dolu nüvə `surface = 2.5` konturudur; dither zolağı ondan **kənara** uzanır. Beləcə silinuet
+ölçmədə ən yaxşı çıxan kontur xəttində qalır, tərəddüd isə onun ətrafında naxış kimi görünür.
+Üstünə iki addım: **təkpiksel təmizləmə** (iki qonşusu olmayan piksel səs-küydür) və **kontur**
+(nüvənin kənar pikselləri tündləşir).
 
 ---
 
 ## Ölçülmüş sərhədlər
 
-Bu layihə təxminlə yox, ölçməklə quruldu. Ən vacib üç nəticə:
+**İşləyən:** bütöv siluetlər — alma, ürək, ulduz, qılınc, kabus.
 
-**1. Piksel-piksel yanaşma yalnız müəyyən formalarda işləyir.** Bütün suallar paralel
-qiymətləndirilir — bir piksel o birinin cavabını bilmir. Koordinatın nöqtəvi funksiyası
-olan formalar əla alınır, qlobal koordinasiya tələb edənlər alınmır:
+**İşləməyən:**
 
-```
-"diaqonal xətt"  ✅              "böyük A hərfi"  ❌
-@.:::...........                 .:-----=+--:::.
-.@:............                  ::-==+=====--::
-.=@-::.........                  .===+++=+=---:.
-.==@=::.....:.                   :=++**+====--:.
-```
-
-Alma, ürək, ulduz kimi bütöv siluetlər yaxşı çıxır; hərf və mətn çıxmır.
-
-**2. Çözünürlük artdıqca ayırdetmə düşür.** Eyni formanı müxtəlif gridlərdə çəkdirib
-"dolu olmalı" və "boş olmalı" piksellərin orta ehtimal fərqini ölçdük:
-
-| Grid | diaqonal | sol yarım | dairə | **orta** |
-| :--- | ---: | ---: | ---: | ---: |
-| 8×8 | 0.401 | 0.544 | 0.264 | 0.403 |
-| 16×16 | 0.410 | 0.558 | 0.224 | 0.397 |
-| 24×24 | 0.417 | 0.566 | 0.187 | 0.390 |
-| 32×32 | 0.342 | 0.576 | 0.154 | 0.357 |
-
-64×64-də səs-küy daha da artır — ona görə təkpiksel təmizləmə var.
-
-**3. Kaskad kömək etmir.** 16×16 nəticəsini 32×32 sualına kontekst kimi verəndə nəticə
-**pisləşdi** — sprite yerindən sürüşdü və dağıldı. Müstəqil çəkiliş daha yaxşıdır, ona görə
-üç ölçü paralel və bir-birindən xəbərsiz işləyir.
+- **Hərf və mətn.** Qlobal koordinasiya tələb edir, marjinal paylanma onu verə bilmir:
+  ```
+  "diaqonal xətt"  ✅              "böyük A hərfi"  ❌
+  @.:::...........                 .:-----=+--:::.
+  .@:............                  ::-==+=====--::
+  .=@-::.........                  .===+++=+=---:.
+  ```
+- **Kaskad.** 16×16 nəticəsini 32×32-yə kontekst kimi verəndə nəticə pisləşdi — sprite sürüşdü
+  və dağıldı. Ona görə üç ölçü bir-birindən xəbərsiz işləyir.
+- **Tuvalın ~3%-dən kiçik hissələr** normallaşdırma ilə belə zəif qalır.
+- **Sınanıb rədd edilən üsullar:** piksel başına hissə `choice` (hər şeyi "gövdə" adlandırdı),
+  sətir-parametrləşdirmə (düzbucaqlı plitə verdi), ensemble (model deterministikdir).
 
 <details>
 <summary><b>API limitləri</b></summary>
@@ -106,12 +118,12 @@ Alma, ürək, ulduz kimi bütöv siluetlər yaxşı çıxır; hərf və mətn ç
 | :--- | :--- |
 | `choice` variant tavanı | **255** (256 → HTTP 400) |
 | `score` səviyyə sayı | 2–10, nəticə arada float |
-| Bir sorğuda sual sayı | 2048 sınanıb → 1.3s; limit sual sayı yox, **64k kontekstdir** |
+| Bir sorğuda sual sayı | limit sual sayı yox, **64k kontekstdir**; `score` sualı `noul`-dan ~5× ağırdır |
 | Qiymət | **$0.042 / 1M input** — output pulsuz |
 | Sürət limiti | 1200 sorğu/dəq, 250k token/san |
 | Giriş | yalnız mətn |
 
-Üç ölçü birlikdə, rəngli rejimdə bir sprite dəsti ≈ **$0.004**.
+Üç ölçü birlikdə, rəngli rejimdə bir sprite dəsti ≈ **$0.013**.
 
 </details>
 
@@ -134,7 +146,7 @@ npm start
 | `JEV_API_KEY` | bəli | [console.typesafe.ai](https://console.typesafe.ai/settings/keys) |
 | `PORT` | xeyr | Standart: `3200` |
 
-Hər sprite öz çözünürlüyündə PNG kimi yüklənə bilər — 16×16 sprite 16×16 piksel fayl olur.
+Hər sprite öz çözünürlüyündə PNG kimi yüklənir — 16×16 sprite 16×16 piksel fayl olur.
 
 ## Necə qurulub
 
@@ -146,7 +158,7 @@ public/
   app.js           Ölçüləri paralel işə salır, ölçmələri toplayır
   jev.js           Proxy müştərisi + sessiya ölçmələri
   paper.js         N×N offscreen → nearest-neighbor böyütmə, dither, kontur
-  pixel.js         Motor: palitra → quruluş zolaqları → rəng xəritəsi
+  pixel.js         Motor: palitra → forma SDF → rəng SDF-ləri → argmax
   palette.js       12 rəngli palitra
 ```
 

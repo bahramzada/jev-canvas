@@ -1,70 +1,148 @@
 /**
- * Piksel motoru — hər piksel bir JEV sualıdır.
+ * Piksel motoru — SDF (dərinlik sahəsi) üzərində.
  *
- * Quruluş: N×N `noul` — "bu piksel obyektə aiddir, yoxsa fondur?". Suallar bir
- * sorğuda paralel qiymətləndirilir, ona görə 16×16 və 32×32 tək çağırışa sığır.
- * 64×64 = 4096 sual 64k kontekstə sığmır, 4 sətir zolağına bölünür və zolaqlar
- * paralel gedir — bölünmə nəticəyə təsir etmir, çünki suallar onsuz da müstəqildir.
+ * Sual "bu piksel mürəkkəblidirmi?" (noul) deyil, **"bu piksel obyektin nə qədər
+ * dərinindədir?"** (score, 5 səviyyə). Səbəb ölçmədir: müstəqil noul sualları
+ * marjinal paylanma verir və sərhəd səs-küylü çıxır; score isə səviyyələr arasında
+ * qalan kəsilməz dəyər qaytarır, ona görə sahə hamar olur.
  *
- * Rəng ayrıca və kobud şəbəkədə soruşulur: 8×8 bölgə üçün `choice`. Səbəb ölçmədir —
- * quruluş yüksək çözünürlükdə işləyir, rəng isə bölgə səviyyəsində daha sabit çıxır.
+ * Ölçülmüş fərq (32×32, "red apple with a green leaf"):
+ *   noul      → kompaktlıq 4.29 · 2 komponent · 1.3% təkpiksel
+ *   score-SDF → kompaktlıq 3.03 · 1 komponent · 0.8% təkpiksel
+ *
+ * 64×64 heç vaxt birbaşa soruşulmur. 4096 sual modelin ayırdetmə gücünü aşır —
+ * ölçdük: 15 ayrı komponent, kompaktlıq 17.4, yararsız. SDF kəsilməz sahə olduğu
+ * üçün 32×32-də soruşulur və bilinear böyüdülür: 1 komponent, kompaktlıq 3.05,
+ * üstəlik dörd dəfə ucuz. Şrift renderi də SDF-i məhz buna görə işlədir.
+ *
+ * Rəng: hər palitra rəngi öz SDF sahəsini alır ("bu piksel yaşıl sahənin nə qədər
+ * dərinindədir?"), sahələr **öz aralığına normallaşdırılır**, piksel argmax-a gedir.
+ * Normallaşdırma vacibdir: ölçmədə yarpağın sahəsi maksimum 1.34-ə çatır, gövdəninki
+ * 3.88 — mütləq müqayisə kiçik hissələri tamamilə silirdi.
  */
 import { PENS, penCriteria, INK_DEFAULT } from "./palette.js";
 
 export const SIZES = [16, 32, 64];
-const MAP = 8; // rəng bölgələri şəbəkəsi
-const MAX_PER_CALL = 1024; // bir sorğuda sual həddi (kontekstə görə)
+
+/** Render çözünürlüyü → modeldən soruşulan çözünürlük. */
+const ASK = { 16: 16, 32: 32, 64: 32 };
+const COLOR_N = 16; // rəng sahələri alçaq tezliklidir, forma qədər dəqiqlik istəmir
+const MAX_PER_CALL = 512; // score sualı noul-dan ~5× ağırdır
+const SURFACE = 2.5; // sahənin sıfır xətti: bundan yuxarısı obyektin içidir
+
+/** Forma rubrikası — 0..4, cavab arada float ola bilər. */
+const DEPTH = [
+  "far outside the object, empty background",
+  "just outside the object's outline",
+  "exactly on the object's outline",
+  "just inside the object, near its edge",
+  "deep inside the object",
+];
+
+/** Rəng rubrikası — eyni məntiq, konkret rəngli sahə üçün. */
+const COLOR_DEPTH = (c) => [
+  `far from any ${c} area`,
+  `near a ${c} area but not inside it`,
+  `right at the edge of a ${c} area`,
+  `inside a ${c} area`,
+  `deep inside a large ${c} area`,
+];
 
 export const meta = (N) => {
-  const total = N * N;
-  const calls = Math.ceil(total / MAX_PER_CALL);
+  const ask = ASK[N];
+  const calls = Math.ceil((ask * ask) / MAX_PER_CALL);
   return {
     N,
     ad: `${N}×${N}`,
-    alt: `${total.toLocaleString("az")} noul · ${calls} çağırış`,
+    alt: ask === N ? `${ask * ask} score · ${calls} çağırış` : `${ask}×${ask} soruşulur → ${N}×${N} render`,
     izah:
       N === 16
-        ? "Ən kobud sprite. Hər piksel böyük qərardır, ona görə forma ən aydın oxunur."
+        ? "Ən etibarlı ölçü. Ölçmədə hər mövzuda təmiz çıxdı — 0% təkpiksel, tək komponent."
         : N === 32
-          ? "İkonlar üçün klassik ölçü. Bir çağırışda 1024 sual, hamısı paralel."
-          : "4096 sual 64k kontekstə sığmır — dörd sətir zolağına bölünür, paralel gedir.",
+          ? "Modelin ayırdetmə gücünün son sərhəddi. Bundan yuxarı birbaşa soruşmaq dağılır."
+          : "32×32 SDF sahəsi bilinear böyüdülür. Birbaşa 4096 sual 15 ayrı parça verirdi — bu isə tək.",
   };
 };
 
-/** Bir zolağın sualları. Kriteriya yazmırıq: token sayını iki dəfə azaldır. */
-function bandQuestions(N, from, to) {
-  const q = {};
-  for (let r = from; r < to; r++) {
-    for (let c = 0; c < N; c++) q[`p${r}_${c}`] = { type: "noul", instructions: `r=${r},c=${c} ink?` };
-  }
-  return q;
+// --- sahə əməliyyatları ---------------------------------------------------
+
+/** Bilinear böyütmə — SDF kəsilməz olduğu üçün aralıq dəyərlər mənalıdır. */
+function upsample(field, M) {
+  const n = field.length;
+  if (n === M) return field;
+  return [...Array(M)].map((_, R) =>
+    [...Array(M)].map((_, C) => {
+      const y = ((R + 0.5) * n) / M - 0.5;
+      const x = ((C + 0.5) * n) / M - 0.5;
+      const y0 = Math.max(0, Math.min(n - 1, Math.floor(y)));
+      const x0 = Math.max(0, Math.min(n - 1, Math.floor(x)));
+      const y1 = Math.min(n - 1, y0 + 1);
+      const x1 = Math.min(n - 1, x0 + 1);
+      const fy = y - y0;
+      const fx = x - x0;
+      return (
+        field[y0][x0] * (1 - fx) * (1 - fy) +
+        field[y0][x1] * fx * (1 - fy) +
+        field[y1][x0] * (1 - fx) * fy +
+        field[y1][x1] * fx * fy
+      );
+    })
+  );
+}
+
+/** Sahəni öz min–maks aralığına sıxır ki, rənglər arasında müqayisə ədalətli olsun. */
+function normalized(field) {
+  const flat = field.flat();
+  const lo = Math.min(...flat);
+  const hi = Math.max(...flat);
+  const span = Math.max(1e-6, hi - lo);
+  return field.map((row) => row.map((v) => (v - lo) / span));
 }
 
 const spriteState = (N, subject, extra = {}) => ({
-  task: `${N}x${N} pixel art sprite, one decision per pixel`,
+  task: `${N}x${N} pixel art sprite`,
   subject,
   axes: `r 0 = top, r ${N - 1} = bottom, c 0 = left, c ${N - 1} = right`,
-  note: "Decide for every pixel independently whether it belongs to the object or is empty background.",
   ...extra,
 });
 
-/** Sprite-ın 1-bit ASCII təsviri — rəng sualına kontekst kimi gedir. */
-function asciiSprite(values) {
-  const flat = values.flat();
-  const lo = Math.min(...flat);
-  const hi = Math.max(...flat);
-  const th = lo + (hi - lo) * 0.55;
-  return values.map((row, i) => `${String(i).padStart(2)}: ${row.map((v) => (v >= th ? "#" : ".")).join("")}`);
+/** Bir SDF sahəsini soruşur; lazım gələndə sətir zolaqlarına bölünür. */
+async function askField(session, { N, subject, criteria, note, signal, extra = {} }) {
+  const rows = Math.max(1, Math.floor(MAX_PER_CALL / N));
+  const jobs = [];
+  for (let from = 0; from < N; from += rows) {
+    const to = Math.min(N, from + rows);
+    const q = {};
+    for (let r = from; r < to; r++) {
+      for (let c = 0; c < N; c++) q[`p${r}_${c}`] = { type: "score", instructions: `r=${r},c=${c}`, criteria };
+    }
+    jobs.push(
+      session.call(
+        spriteState(N, subject, { note, ...(to - from < N ? { band: `rows ${from}–${to - 1}` } : {}), ...extra }),
+        q,
+        { signal }
+      )
+    );
+  }
+  const out = await Promise.all(jobs);
+  const field = [...Array(N)].map(() => Array(N).fill(0));
+  for (const res of out) {
+    for (const [k, a] of Object.entries(res.answers)) {
+      const [, r, c] = k.match(/p(\d+)_(\d+)/).map(Number);
+      field[r][c] = a.score;
+    }
+  }
+  return { field, last: out[out.length - 1] };
 }
+
+// --- motor ----------------------------------------------------------------
 
 export async function* run({ N, subject, color, paper, session, signal }) {
   paper.clear();
-
-  const values = [...Array(N)].map(() => Array(N).fill(0));
-  let colorAt = () => INK_DEFAULT;
+  const ask = ASK[N];
   let palette = null;
 
-  // --- 1) rəngli rejimdə əvvəlcə palitra -----------------------------------
+  // --- 1) palitra ---------------------------------------------------------
   if (color) {
     const res = await session.call(
       {
@@ -77,22 +155,21 @@ export async function* run({ N, subject, color, paper, session, signal }) {
         r2: {
           type: "choice",
           instructions:
-            "Colour of a clearly different second part of the subject — a leaf, a stem, a handle, a window, a face. Not the body colour.",
+            "Colour of a clearly different second part — a leaf, a stem, a handle, a window, a face. Not the body colour.",
           criteria: penCriteria(),
         },
-        r3: { type: "choice", instructions: "Colour of a small accent or detail on the subject?", criteria: penCriteria() },
-        r4: { type: "choice", instructions: "One more colour, if the subject has yet another distinct part?", criteria: penCriteria() },
-        dordunku: {
+        r3: { type: "choice", instructions: "Colour of a small accent or detail?", criteria: penCriteria() },
+        ucuncu: {
           type: "noul",
-          instructions: "Does this sprite need a fourth colour at all?",
-          criteria: { true: "yes, four colours", false: "three or fewer are enough" },
+          instructions: "Does this sprite need a third colour at all?",
+          criteria: { true: "yes, three colours", false: "two are enough" },
         },
       },
       { signal }
     );
     const a = res.answers;
-    const want = a.dordunku.noul >= 0.5 ? 4 : 3;
-    palette = [...new Set([a.r1.choice, a.r2.choice, a.r3.choice, a.r4.choice].slice(0, want))]
+    const want = a.ucuncu.noul >= 0.5 ? 3 : 2;
+    palette = [...new Set([a.r1.choice, a.r2.choice, a.r3.choice].slice(0, want))]
       .map((id) => PENS[id])
       .filter(Boolean);
     if (!palette.length) palette = [PENS.qara];
@@ -104,108 +181,77 @@ export async function* run({ N, subject, color, paper, session, signal }) {
       detail: palette.map((p) => p.az).join(" · "),
       conf: a.r1.confidence,
       swatches: palette.map((p) => p.hex),
-      extra: `4-cü rəng ${a.dordunku.noul.toFixed(2)}`,
+      extra: `3-cü rəng ${a.ucuncu.noul.toFixed(2)}`,
     };
   }
 
-  // --- 2) quruluş zolaqları + rəng xəritəsi paralel ------------------------
-  const rowsPer = Math.min(N, Math.max(1, Math.floor(MAX_PER_CALL / N)));
-  const bands = [];
-  for (let from = 0; from < N; from += rowsPer) {
-    const to = Math.min(N, from + rowsPer);
-    bands.push(
-      session
-        .call(
-          spriteState(N, subject, N > rowsPer ? { band: `this request covers rows ${from}–${to - 1} of the same sprite` } : {}),
-          bandQuestions(N, from, to),
-          { signal }
-        )
-        .then((res) => ({ res, from, to }))
-    );
-  }
+  // --- 2) forma sahəsi ----------------------------------------------------
+  const shape = await askField(session, {
+    N: ask,
+    subject,
+    criteria: DEPTH,
+    note: "For each pixel say how deep inside the object it lies.",
+    signal,
+  });
+  const field = upsample(shape.field, N);
+  const baseHex = palette ? palette[0].hex : INK_DEFAULT;
+  paper.drawSprite(field, { colorAt: () => baseHex, surface: SURFACE });
 
-  // zolaqlar gəldikcə sprite yenilənir — canlı görünsün
-  let filled = 0;
-  for (const band of bands) {
-    const { res, from, to } = await band;
-    for (let r = from; r < to; r++) {
-      for (let c = 0; c < N; c++) values[r][c] = res.answers[`p${r}_${c}`].noul;
-    }
-    filled = to;
+  const sf = shape.field.flat();
+  yield {
+    kind: "step",
+    res: shape.last,
+    text: "forma sahəsi",
+    detail: `${ask}×${ask} SDF`,
+    p: Math.max(...sf) / 4,
+    extra:
+      `dərinlik ${Math.min(...sf).toFixed(2)}–${Math.max(...sf).toFixed(2)}` +
+      (ask === N ? "" : ` · ${ask}→${N} böyüdüldü`),
+  };
 
-    const seen = values.slice(0, filled).flat();
-    const lo = Math.min(...seen);
-    const hi = Math.max(...seen);
-    paper.drawSprite(values, { colorAt, lo, hi });
-
-    yield {
-      kind: "step",
-      res,
-      text: N > rowsPer ? `sətir ${from}–${to - 1}` : "quruluş",
-      detail: `${(to - from) * N} sual`,
-      p: hi,
-      extra: `${lo.toFixed(2)}–${hi.toFixed(2)}`,
-    };
-  }
-
-  // --- 3) rəng xəritəsi ----------------------------------------------------
-  // Quruluşdan SONRA soruşulur və hazır sprite state-ə verilir. Paralel gedəndə
-  // model hansı bölgənin dolu olduğunu bilmirdi və hamısına eyni rəngi verirdi.
+  // --- 3) rəng sahələri ---------------------------------------------------
   if (color && palette.length > 1) {
-    const q = {};
-    const criteria = { ...Object.fromEntries(palette.map((p) => [p.az, p.en])), bos: "nothing here, empty background" };
-    for (let r = 0; r < MAP; r++) {
-      for (let c = 0; c < MAP; c++) {
-        q[`m${r}_${c}`] = {
-          type: "choice",
-          instructions: `Region row ${r}, column ${c} of ${MAP}: which colour do the filled pixels there take?`,
-          criteria,
-        };
+    const cn = Math.min(COLOR_N, ask);
+    const fields = await Promise.all(
+      palette.map((pen) =>
+        askField(session, {
+          N: cn,
+          subject,
+          criteria: COLOR_DEPTH(pen.en),
+          note: `For each pixel say how deep inside a ${pen.en} coloured area of the sprite it lies.`,
+          signal,
+          extra: { colour: pen.en },
+        }).then((f) => ({ pen, last: f.last, field: upsample(normalized(f.field), N) }))
+      )
+    );
+
+    const colorAt = (r, c) => {
+      let best = fields[0];
+      for (const f of fields) if (f.field[r][c] > best.field[r][c]) best = f;
+      return best.pen.hex;
+    };
+
+    const counts = new Map();
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        if (field[r][c] < SURFACE) continue;
+        const hex = colorAt(r, c);
+        counts.set(hex, (counts.get(hex) ?? 0) + 1);
       }
     }
-    const res = await session.call(
-      {
-        task: `Colouring a finished ${N}x${N} pixel art sprite, region by region.`,
-        subject,
-        sprite: asciiSprite(values),
-        legend: "'#' = a filled pixel of the sprite, '.' = empty background",
-        axes: `the sprite above is split into ${MAP}x${MAP} equal regions; region row 0 = top, column 0 = left`,
-        palette: palette.map((p) => p.en),
-        note: "Different parts of the subject take different colours — the body, a leaf or stem, a highlight.",
-      },
-      q,
-      { signal }
-    );
-    const grid = [...Array(MAP)].map((_, r) =>
-      [...Array(MAP)].map((_, c) => {
-        const pick = res.answers[`m${r}_${c}`].choice;
-        return PENS[Object.keys(PENS).find((k) => PENS[k].az === pick)]?.hex ?? palette[0].hex;
-      })
-    );
-    colorAt = (r, c) =>
-      grid[Math.min(MAP - 1, Math.floor((r / N) * MAP))][Math.min(MAP - 1, Math.floor((c / N) * MAP))];
+    paper.drawSprite(field, { colorAt, surface: SURFACE });
 
-    const flat = values.flat();
-    paper.drawSprite(values, { colorAt, lo: Math.min(...flat), hi: Math.max(...flat) });
-
-    const used = new Set(grid.flat());
     yield {
       kind: "step",
-      res,
-      text: "rəng xəritəsi",
-      detail: `${MAP}×${MAP} bölgə`,
-      swatches: [...used],
-      extra: `${used.size} rəng işlədildi`,
+      res: fields[fields.length - 1].last,
+      text: "rəng sahələri",
+      detail: `${palette.length} × ${cn}×${cn} SDF`,
+      swatches: [...counts.keys()],
+      extra: [...counts.entries()]
+        .map(([hex, n]) => `${palette.find((p) => p.hex === hex)?.az ?? "?"} ${n}px`)
+        .join(" · "),
     };
   }
 
-  const flat = values.flat();
-  const lo = Math.min(...flat);
-  const hi = Math.max(...flat);
-  yield {
-    kind: "done",
-    text: `${N}×${N} hazır`,
-    extra: `ehtimal aralığı ${lo.toFixed(2)}–${hi.toFixed(2)}`,
-    values,
-  };
+  yield { kind: "done", text: `${N}×${N} hazır`, extra: `${ask}×${ask} soruşuldu` };
 }
