@@ -10,8 +10,8 @@
  *   1. təsvir  — JEV mövzu haqqında ümumi mülahizə sualları cavablayır
  *                (forma ailəsi? hündür? neçə hissə? simmetrik?) — sənədli güclü tərəfi
  *   2. generasiya — kod bu təsvir ətrafında 96 namizəd qurur (API-siz, ani)
- *   3. seçim   — bir çağırış İKİ `choice` sualı verir (mövzuya uyğunluq +
- *                forma ailəsinə uyğunluq); paylanmaların çəkili cəmi fitness-dir
+ *   3. seçim   — bir `choice` çağırışı 96 namizədin HAMISI üçün ehtimal qaytarır;
+ *                bu paylanma birbaşa fitness funksiyasıdır
  *   4. mutasiya — qaliblər cütləşir, yeni nəsil qurulur, 3-cü addıma qayıdılır
  *
  * Niyə müqayisəli seçim, niyə mütləq bal yox — ölçdük:
@@ -50,17 +50,14 @@ export const FAMILY_DESC = {
   qarisiq: "a mix of rounded and angular parts",
 };
 
-/**
- * Forma sualının fitness-dəki çəkisi.
- *
- * Ölçmə: şam ağacı üçün tək "uyğunluq" sualı SƏHV qalib verirdi (oval 0.42 >
- * konus 0.40) və çözünürlük artdıqca səhv daha da möhkəmlənirdi (32×32-də
- * 0.71 vs 0.13). Forma sualı isə konusu düzgün tapır; w=0.45 ilə birləşəndə
- * qalib düzəlir. Nəzarət mövzusunda (göbələk) zərər vermir, əksinə
- * gücləndirir: 0.72 → 0.81. "qarisiq" ailəsində sual mənasız olduğu üçün
- * çəki aşağı salınır.
+/*
+ * Sınandı və geri alındı: mühakiməyə ikinci ox (forma ailəsinə uyğunluq sualı)
+ * əlavə etmək. Təcrid olunmuş ölçmədə işləyirdi — şam ağacı namizədlərində
+ * qalibi ovaldan konusa çevirirdi (0.41 vs 0.38) və nəzarət mövzusuna zərər
+ * vermirdi (göbələk 0.72 → 0.82). Amma canlı dörd mövzuda tanınma sayı
+ * dəyişmədi (1/4), qiymət isə $0.006 → $0.0109 qalxdı, çünki ikinci sual
+ * bütün namizəd kriteriyalarını təkrarlayır. Faydası qiymətini ödəmədi.
  */
-const FORMA_W = { dairevi: 0.45, ucbucaqli: 0.45, bucaqli: 0.45, qarisiq: 0.2 };
 
 /** Forma ailəsinə görə tip paylanması — JEV-in cavabı ilk populyasiyanı yönləndirir. */
 export const FAMILY = {
@@ -248,6 +245,15 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
             instructions: "Colour of a clearly different second part — a leaf, a stem, a handle, a face. Not the body colour.",
             criteria: penCriteria(),
           },
+          // tək rəngli mövzuda ikinci rəngi məcbur etməmək üçün — bax pixel.js
+          cox_reng: {
+            type: "noul",
+            instructions: "Does this subject have a clearly visible second part in a different colour?",
+            criteria: {
+              true: "yes — a leaf, a stem, a handle, a face or similar, in its own colour",
+              false: "no — it is essentially one solid colour",
+            },
+          },
         }
       : {}),
   };
@@ -269,7 +275,9 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
   };
 
   const palette = color
-    ? [...new Set([a.r1.choice, a.r2.choice])].map((id) => PENS[id]).filter(Boolean)
+    ? [...new Set(a.cox_reng.noul >= 0.5 ? [a.r1.choice, a.r2.choice] : [a.r1.choice])]
+        .map((id) => PENS[id])
+        .filter(Boolean)
     : [PENS.qara];
   if (!palette.length) palette.push(PENS.qara);
 
@@ -311,22 +319,14 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
           instructions: `Which candidate is the best pixel art sprite of "${subject}"?`,
           criteria,
         },
-        forma: {
-          type: "choice",
-          instructions: `Which candidate's silhouette is most clearly ${FAMILY_DESC[spec.aile]}?`,
-          criteria,
-        },
       },
       { signal }
     );
 
     // Paylanmanın ÖZÜ fitness-dir — yalnız qalib deyil, hamısının balı var.
-    // İki ox birləşdirilir: mövzuya uyğunluq və forma ailəsinə uyğunluq.
     const P = res.answers.secim.probabilities;
-    const F = res.answers.forma.probabilities;
-    const fw = FORMA_W[spec.aile] ?? 0.45;
     const scored = pop
-      .map((g, i) => ({ g, i, p: (1 - fw) * (P[`n${i}`] ?? 0) + fw * (F[`n${i}`] ?? 0), pm: P[`n${i}`] ?? 0 }))
+      .map((g, i) => ({ g, i, p: P[`n${i}`] ?? 0 }))
       .sort((x, y) => y.p - x.p);
 
     const winner = scored[0];
@@ -340,9 +340,7 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
       detail: `qalib n${winner.i}`,
       p: winner.p,
       conf: res.answers.secim.confidence,
-      extra:
-        `${POP} namizəd · uyğunluq ${winner.pm.toFixed(3)} · 2-ci ${scored[1].p.toFixed(3)}` +
-        ` · ${winner.g.lobes.length} lobe`,
+      extra: `${POP} namizəd · 2-ci ${scored[1].p.toFixed(3)} · ${winner.g.lobes.length} lobe`,
     };
 
     if (gen === GENERATIONS - 1) break;

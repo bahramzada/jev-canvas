@@ -159,6 +159,17 @@ export async function* run({ N, subject, color, paper, session, signal }) {
           criteria: penCriteria(),
         },
         r3: { type: "choice", instructions: "Colour of a small accent or detail?", criteria: penCriteria() },
+        // Bu sual olmadan palitra HƏMİŞƏ ikinci rəng qaytarırdı: "ikinci hissənin
+        // rəngi" sualı cavabsız qala bilmir. Nəticədə tək rəngli mövzular —
+        // məsələn ürək — üzərinə yad ləkələr alırdı.
+        cox_reng: {
+          type: "noul",
+          instructions: "Does this subject have a clearly visible second part in a different colour?",
+          criteria: {
+            true: "yes — a leaf, a stem, a handle, a face or similar, in its own colour",
+            false: "no — it is essentially one solid colour",
+          },
+        },
         ucuncu: {
           type: "noul",
           instructions: "Does this sprite need a third colour at all?",
@@ -168,7 +179,7 @@ export async function* run({ N, subject, color, paper, session, signal }) {
       { signal }
     );
     const a = res.answers;
-    const want = a.ucuncu.noul >= 0.5 ? 3 : 2;
+    const want = a.cox_reng.noul < 0.5 ? 1 : a.ucuncu.noul >= 0.5 ? 3 : 2;
     palette = [...new Set([a.r1.choice, a.r2.choice, a.r3.choice].slice(0, want))]
       .map((id) => PENS[id])
       .filter(Boolean);
@@ -181,7 +192,7 @@ export async function* run({ N, subject, color, paper, session, signal }) {
       detail: palette.map((p) => p.az).join(" · "),
       conf: a.r1.confidence,
       swatches: palette.map((p) => p.hex),
-      extra: `3-cü rəng ${a.ucuncu.noul.toFixed(2)}`,
+      extra: `çoxrəngli ${a.cox_reng.noul.toFixed(2)} · 3-cü rəng ${a.ucuncu.noul.toFixed(2)}`,
     };
   }
 

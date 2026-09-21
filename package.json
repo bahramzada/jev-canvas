@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "JEV (TypeSafe System One) ehtimallarla rəsm çəkən plotter studiyası",
+  "description": "JEV (TypeSafe System One) ilə piksel art — ölçülmüş araşdırma / measured experiment",
   "scripts": {
     "start": "node server.js"
   },
@@ -16,5 +16,6 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "license": "MIT"
 }
