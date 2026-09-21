@@ -40,6 +40,16 @@ Turnir məhz budur:
 6 nəsil ≈ 5 saniyə, **$0.006**. Genom çözünürlükdən asılı deyil: mühakimə 16×16-da gedir
 (ölçmədə ən etibarlı ölçü), qalib isə istənilən çözünürlükdə render olunur.
 
+Genom lüğəti: dörd forma tipi (ellips · üçbucaq yuxarı · düzbucaqlı · üçbucaq aşağı),
+**mərkəz kilidi** (lobe oxun üstünə bağlanır və güzgülənmir — əks halda simmetrik
+mövzularda gövdə iki ayağa bölünürdü) və JEV-in forma ailəsi cavabına görə
+qurulan tip paylanması.
+
+> **Ölçülmüş nəticə:** bu üç əlavə **tanınma faizini dəyişmədi** — 4 mövzudan yenə 1-i
+> tanınır. Düzələn: şam ağacının gövdəsi artıq bölünmür, JEV forma ailəsini düzgün
+> seçir (şam üçün `ucbucaqli`), üçbucaq/düzbucaqlı primitivləri işləyir. Düzəlməyən:
+> JEV bu primitivləri seçmir — 16×16-da kiçik üçbucaq onsuz da ləkə kimi görünür.
+
 ### Ölçdük: JEV sprite-ı oxuya bilirmi?
 
 Beş sprite hazırlayıb iki üsulla soruşduq. **Mütləq `noul` işləmir:**
