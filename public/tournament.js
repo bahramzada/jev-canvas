@@ -10,8 +10,8 @@
  *   1. təsvir  — JEV mövzu haqqında ümumi mülahizə sualları cavablayır
  *                (forma ailəsi? hündür? neçə hissə? simmetrik?) — sənədli güclü tərəfi
  *   2. generasiya — kod bu təsvir ətrafında 96 namizəd qurur (API-siz, ani)
- *   3. seçim   — bir `choice` çağırışı 96 namizədin HAMISI üçün ehtimal qaytarır;
- *                bu paylanma birbaşa fitness funksiyasıdır
+ *   3. seçim   — bir çağırış İKİ `choice` sualı verir (mövzuya uyğunluq +
+ *                forma ailəsinə uyğunluq); paylanmaların çəkili cəmi fitness-dir
  *   4. mutasiya — qaliblər cütləşir, yeni nəsil qurulur, 3-cü addıma qayıdılır
  *
  * Niyə müqayisəli seçim, niyə mütləq bal yox — ölçdük:
@@ -41,6 +41,26 @@ const ELITE = 2;
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/** Forma ailəsi təsvirləri — həm təsvir sualında, həm də mühakimədə eyni mətn işlənir. */
+export const FAMILY_DESC = {
+  dairevi: "rounded and organic — circles, ovals, soft blobs",
+  ucbucaqli: "triangular or cone-like — wide at the bottom, narrowing towards the top",
+  bucaqli: "boxy and angular — rectangles, straight edges, flat sides",
+  qarisiq: "a mix of rounded and angular parts",
+};
+
+/**
+ * Forma sualının fitness-dəki çəkisi.
+ *
+ * Ölçmə: şam ağacı üçün tək "uyğunluq" sualı SƏHV qalib verirdi (oval 0.42 >
+ * konus 0.40) və çözünürlük artdıqca səhv daha da möhkəmlənirdi (32×32-də
+ * 0.71 vs 0.13). Forma sualı isə konusu düzgün tapır; w=0.45 ilə birləşəndə
+ * qalib düzəlir. Nəzarət mövzusunda (göbələk) zərər vermir, əksinə
+ * gücləndirir: 0.72 → 0.81. "qarisiq" ailəsində sual mənasız olduğu üçün
+ * çəki aşağı salınır.
+ */
+const FORMA_W = { dairevi: 0.45, ucbucaqli: 0.45, bucaqli: 0.45, qarisiq: 0.2 };
 
 /** Forma ailəsinə görə tip paylanması — JEV-in cavabı ilk populyasiyanı yönləndirir. */
 export const FAMILY = {
@@ -213,12 +233,7 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
     forma: {
       type: "choice",
       instructions: "What is the overall shape family of this subject when drawn as a simple silhouette?",
-      criteria: {
-        dairevi: "rounded and organic — circles, ovals, soft blobs",
-        ucbucaqli: "triangular or cone-like — wide at the bottom, narrowing towards the top",
-        bucaqli: "boxy and angular — rectangles, straight edges, flat sides",
-        qarisiq: "a mix of rounded and angular parts",
-      },
+      criteria: FAMILY_DESC,
     },
     simmetrik: {
       type: "noul",
@@ -247,6 +262,7 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
   const spec = {
     parts: partsMap[a.hisse.choice] ?? 2,
     sym: a.simmetrik.noul >= 0.5,
+    aile: FAMILY_DESC[a.forma.choice] ? a.forma.choice : "qarisiq",
     weights: FAMILY[a.forma.choice] ?? FAMILY.qarisiq,
     tall: 0.72 + (a.nisbet.score / 4) * 0.56,
     wide: 1.28 - (a.nisbet.score / 4) * 0.56,
@@ -295,14 +311,22 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
           instructions: `Which candidate is the best pixel art sprite of "${subject}"?`,
           criteria,
         },
+        forma: {
+          type: "choice",
+          instructions: `Which candidate's silhouette is most clearly ${FAMILY_DESC[spec.aile]}?`,
+          criteria,
+        },
       },
       { signal }
     );
 
     // Paylanmanın ÖZÜ fitness-dir — yalnız qalib deyil, hamısının balı var.
+    // İki ox birləşdirilir: mövzuya uyğunluq və forma ailəsinə uyğunluq.
     const P = res.answers.secim.probabilities;
+    const F = res.answers.forma.probabilities;
+    const fw = FORMA_W[spec.aile] ?? 0.45;
     const scored = pop
-      .map((g, i) => ({ g, p: P[`n${i}`] ?? 0, i }))
+      .map((g, i) => ({ g, i, p: (1 - fw) * (P[`n${i}`] ?? 0) + fw * (F[`n${i}`] ?? 0), pm: P[`n${i}`] ?? 0 }))
       .sort((x, y) => y.p - x.p);
 
     const winner = scored[0];
@@ -317,7 +341,7 @@ export async function* run({ subject, color, papers, session, signal, renderN = 
       p: winner.p,
       conf: res.answers.secim.confidence,
       extra:
-        `${POP} namizəd · 2-ci ${scored[1].p.toFixed(3)} · 3-cü ${scored[2].p.toFixed(3)}` +
+        `${POP} namizəd · uyğunluq ${winner.pm.toFixed(3)} · 2-ci ${scored[1].p.toFixed(3)}` +
         ` · ${winner.g.lobes.length} lobe`,
     };
 

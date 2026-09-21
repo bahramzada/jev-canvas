@@ -45,7 +45,16 @@ Genom lüğəti: dörd forma tipi (ellips · üçbucaq yuxarı · düzbucaqlı �
 mövzularda gövdə iki ayağa bölünürdü) və JEV-in forma ailəsi cavabına görə
 qurulan tip paylanması.
 
-> **Ölçülmüş nəticə:** bu üç əlavə **tanınma faizini dəyişmədi** — 4 mövzudan yenə 1-i
+Mühakimə iki oxludur: eyni çağırışda həm "mövzuya ən uyğun", həm də "forma ailəsinə ən uyğun"
+soruşulur, fitness ikisinin çəkili cəmidir (forma çəkisi 0.45, `qarisiq` ailəsində 0.2).
+
+> **Sınanıb rədd edilən: mühakimə çözünürlüyünü qaldırmaq.** Şam ağacı namizədləri üzərində
+> ölçdük — JEV oval çətirli ağacı konusdan üstün tutur və **çözünürlük artdıqca səhvə daha
+> da əmin olur**: 16×16-da 0.44 vs 0.38, 24×24-də 0.64 vs 0.25, 32×32-də 0.71 vs 0.13.
+> Saf forma testində isə üçbucağı hər çözünürlükdə düzgün tanıyır (0.63 vs 0.35). Yəni
+> problem görmə deyil, üstünlükdür — ikinci ox məhz buna görə əlavə olundu.
+
+> **Ölçülmüş nəticə:** bu əlavələr **tanınma faizini dəyişmədi** — 4 mövzudan yenə 1-i
 > tanınır. Düzələn: şam ağacının gövdəsi artıq bölünmür, JEV forma ailəsini düzgün
 > seçir (şam üçün `ucbucaqli`), üçbucaq/düzbucaqlı primitivləri işləyir. Düzəlməyən:
 > JEV bu primitivləri seçmir — 16×16-da kiçik üçbucaq onsuz da ləkə kimi görünür.
