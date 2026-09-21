@@ -173,6 +173,42 @@ export class Paper {
     this.blit();
   }
 
+  /**
+   * Hazır indeks şəbəkəsini çəkir (turnir rejimi): 0 = boş, 1..K = palitra indeksi.
+   *
+   * Burada dither yoxdur — genomdan gələn forma onsuz da kəsgindir, tərəddüd
+   * sahəsi deyil. Yalnız kontur tətbiq olunur.
+   */
+  drawPixels(grid, hexes, { outline = true } = {}) {
+    const { N, octx } = this;
+    const img = octx.createImageData(N, N);
+    const d = img.data;
+    const cache = new Map();
+
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        const idx = grid[r][c];
+        if (!idx) continue;
+        const edge = outline && (!grid[r - 1]?.[c] || !grid[r + 1]?.[c] || !grid[r]?.[c - 1] || !grid[r]?.[c + 1]);
+        const hex = hexes[(idx - 1) % hexes.length];
+        const key = edge ? hex + "|e" : hex;
+        let rgb = cache.get(key);
+        if (!rgb) {
+          rgb = hexToRgb(hex);
+          if (edge) rgb = rgb.map((x) => Math.round(x * 0.52));
+          cache.set(key, rgb);
+        }
+        const i = (r * N + c) * 4;
+        d[i] = rgb[0];
+        d[i + 1] = rgb[1];
+        d[i + 2] = rgb[2];
+        d[i + 3] = 255;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    this.blit();
+  }
+
   /** PNG — sprite öz çözünürlüyündə, böyüdülmədən. */
   toDataURL() {
     return this.off.toDataURL("image/png");

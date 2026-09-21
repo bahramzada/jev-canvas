@@ -9,12 +9,69 @@ tipli dəyər və ehtimal paylanması qaytarır. Burada hər piksel bir `score` 
 **«sən obyektin nə qədər dərinindəsən?»** Cavab kəsilməz bir dərinlik sahəsidir (SDF),
 sprite isə o sahənin kontur xəttidir.
 
-Eyni mövzu üç çözünürlükdə paralel çəkilir: **16×16 · 32×32 · 64×64**
+İki rejim var: **SDF sahəsi** (JEV dərinlik verir, kod kontura çevirir) və
+**Turnir** (kod namizəd sprite-lar qurur, JEV onları qiymətləndirir).
 
 [![Node](https://img.shields.io/badge/Node.js-20+-3c873a?logo=node.js&logoColor=white)](https://nodejs.org)
 [![JEV](https://img.shields.io/badge/JEV-System_One-22d3ee)](https://docs.typesafe.ai)
 
 </div>
+
+---
+
+## Turnir rejimi — JEV çəkmir, seçir
+
+Rəsmi bələdçi qaydanı bir cümlə ilə verir:
+
+> *"Don't ask Jev to 'extract X' — instead 'pick the right candidate from these options.'
+> This reframing — from generation to selection — dramatically improves reliability."*
+
+Turnir məhz budur:
+
+```
+1. təsvir     JEV mövzunu ümumi mülahizə sualları ilə təsvir edir
+              (dəyirmi? hündür? neçə hissə? simmetrik?) — sənədli güclü tərəfi
+2. generasiya kod bu təsvir ətrafında 96 namizəd qurur (API-siz, ani)
+3. seçim      bir `choice` çağırışı 96 namizədin HAMISI üçün ehtimal qaytarır —
+              bu paylanma birbaşa fitness funksiyasıdır
+4. mutasiya   qaliblər cütləşir, yeni nəsil qurulur, 3-cü addıma qayıdılır
+```
+
+6 nəsil ≈ 5 saniyə, **$0.006**. Genom çözünürlükdən asılı deyil: mühakimə 16×16-da gedir
+(ölçmədə ən etibarlı ölçü), qalib isə istənilən çözünürlükdə render olunur.
+
+### Ölçdük: JEV sprite-ı oxuya bilirmi?
+
+Beş sprite hazırlayıb iki üsulla soruşduq. **Mütləq `noul` işləmir:**
+
+```
+alma sprite-ı  → "almadır?" 0.35
+ağac sprite-ı  → "almadır?" 0.42   ← almadan yüksək
+ulduz sprite-ı → "almadır?" 0.40   ← almadan yüksək
+```
+
+**Müqayisəli `choice` işləyir:**
+
+```
+alma 0.61 · ağac 0.33 · ulduz 0.06 · kvadrat 0.00 · səs-küy 0.00
+```
+
+Keyfiyyət sıralaması da düzgündür — dörd alma variantı, qəsdən pilləli:
+
+| Sual | Nəticə |
+| :--- | :--- |
+| Ən yaxşı alma? | **saplı 0.60** > sapsız 0.22 > əyri 0.11 > deşikli 0.07 |
+| Ən təmiz siluet? | sapsız 0.45 ≈ saplı 0.46 >> əyri 0.08 > deşikli 0.01 |
+| Ən simmetrik? | **sapsız 0.59** > saplı 0.33 >> əyri 0.02 |
+
+Ona görə memarlıq şərti sərtdir: **seçim bir çağırış içində, müqayisəli olmalıdır.**
+Namizəd başına ayrı `noul` balı işləmir.
+
+Tutum: bir `choice` çağırışında **128 namizəd** — 671ms, 19k token, $0.0008. Etiket tavanı 255-dir.
+
+> **Dürüst qeyd:** nəsillər arasında ehtimallar müqayisə oluna bilməz — hər nəsil öz
+> populyasiyası daxilində qiymətləndirilir, ona görə qalibin balı nəsildən-nəslə
+> qalxmaya bilər. Keyfiyyət tavanı isə generatorun tavanıdır: JEV seçir, icad etmir.
 
 ---
 
@@ -107,7 +164,10 @@ Dolu nüvə `surface = 2.5` konturudur; dither zolağı ondan **kənara** uzanı
   və dağıldı. Ona görə üç ölçü bir-birindən xəbərsiz işləyir.
 - **Tuvalın ~3%-dən kiçik hissələr** normallaşdırma ilə belə zəif qalır.
 - **Sınanıb rədd edilən üsullar:** piksel başına hissə `choice` (hər şeyi "gövdə" adlandırdı),
-  sətir-parametrləşdirmə (düzbucaqlı plitə verdi), ensemble (model deterministikdir).
+  sətir-parametrləşdirmə (düzbucaqlı plitə verdi), ensemble (model deterministikdir),
+  namizəd başına mütləq `noul` balı (sprite-ları ayırd etmir).
+- **State-dən `band` sahəsini çıxarmaq** — sınandı, ardıcıl effekt yoxdur: almada kompaktlıq
+  3.62 → 4.42 (pisləşdi), kabusda 7.31 → 5.74 (yaxşılaşdı). Olduğu kimi saxlanıldı.
 
 <details>
 <summary><b>API limitləri</b></summary>
@@ -158,7 +218,8 @@ public/
   app.js           Ölçüləri paralel işə salır, ölçmələri toplayır
   jev.js           Proxy müştərisi + sessiya ölçmələri
   paper.js         N×N offscreen → nearest-neighbor böyütmə, dither, kontur
-  pixel.js         Motor: palitra → forma SDF → rəng SDF-ləri → argmax
+  pixel.js         SDF motoru: palitra → forma SDF → rəng SDF-ləri → argmax
+  tournament.js    Turnir motoru: təsvir → genom populyasiyası → choice seçimi → mutasiya
   palette.js       12 rəngli palitra
 ```
 
